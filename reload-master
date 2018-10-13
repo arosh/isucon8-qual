@@ -17,11 +17,23 @@ fi
 
 cp conf/h2o.conf /etc/h2o/h2o.conf
 
+# MariaDB
+MARIADB_SLOW=/var/log/mariadb/mariadb-slow.log
+if [ -e $MARIADB_SLOW ]; then
+  mv $MARIADB_SLOW $MARIADB_SLOW.$NOW
+fi
+
+cp conf/server.cnf /etc/my.cnf.d/server.cnf
+
+if mysqladmin -uroot status; then
+  mysqladmin -uroot flush-logs
+fi
+
 # Python
 PYTHON_SERVICE=torb.python.service
 cp conf/$PYTHON_SERVICE /etc/systemd/system/$PYTHON_SERVICE
 
 systemctl daemon-reload
 systemctl reload h2o
-systemctl restart torb.python
+systemctl restart mariadb torb.python
 journalctl -f -u torb.python
