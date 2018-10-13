@@ -306,7 +306,7 @@ def get_users(user_id):
         [user['id']])
     recent_reservations = []
     for row in cur.fetchall():
-        event = get_event(row['event_id'])
+        event = get_event(row['event_id'], need_detail=False)
         price = event['sheets'][row['sheet_rank']]['price']
         del event['sheets']
         del event['total']

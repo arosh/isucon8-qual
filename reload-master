@@ -33,6 +33,9 @@ fi
 PYTHON_SERVICE=torb.python.service
 cp conf/$PYTHON_SERVICE /etc/systemd/system/$PYTHON_SERVICE
 
+# pprof
+rm /tmp/profile/*
+
 systemctl daemon-reload
 systemctl reload h2o
 systemctl restart mariadb
