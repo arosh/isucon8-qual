@@ -6,6 +6,7 @@ import pathlib
 import copy
 import json
 import subprocess
+import hashlib
 from io import StringIO
 import csv
 from datetime import datetime, timezone
@@ -30,6 +31,10 @@ class CustomFlask(flask.Flask):
 
 app = CustomFlask(__name__, static_folder=str(static_folder), static_url_path='')
 app.config['SECRET_KEY'] = 'tagomoris'
+
+
+from werkzeug.contrib.profiler import ProfilerMiddleware
+app.wsgi_app = ProfilerMiddleware(app.wsgi_app, profile_dir="/tmp/profile")
 
 
 if not os.path.exists(str(icons_folder)):
@@ -105,9 +110,7 @@ def get_events(filter=lambda e: True):
         event_ids = [row['id'] for row in rows if filter(row)]
         events = []
         for event_id in event_ids:
-            event = get_event(event_id)
-            for sheet in event['sheets'].values():
-                del sheet['detail']
+            event = get_event(event_id, need_detail=False)
             events.append(event)
         conn.commit()
     except MySQLdb.Error as e:
@@ -116,7 +119,7 @@ def get_events(filter=lambda e: True):
     return events
 
 
-def get_event(event_id, login_user_id=None):
+def get_event(event_id, login_user_id=None, need_detail=True):
     cur = dbh().cursor()
     cur.execute("SELECT * FROM events WHERE id = %s", [event_id])
     event = cur.fetchone()
@@ -125,35 +128,54 @@ def get_event(event_id, login_user_id=None):
     event["total"] = 0
     event["remains"] = 0
     event["sheets"] = {}
-    for rank in ["S", "A", "B", "C"]:
-        event["sheets"][rank] = {'total': 0, 'remains': 0, 'detail': []}
+    ranks = ["S", "A", "B", "C"]
 
-    cur.execute("SELECT * FROM sheets ORDER BY `rank`, num")
-    sheets = cur.fetchall()
-    for sheet in sheets:
-        if not event['sheets'][sheet['rank']].get('price'):
-            event['sheets'][sheet['rank']]['price'] = event['price'] + sheet['price']
-        event['total'] += 1
-        event['sheets'][sheet['rank']]['total'] += 1
+    if need_detail:
+        for rank in ranks:
+            event["sheets"][rank] = {'total': 0, 'remains': 0, 'detail': []}
 
-        cur.execute(
-            "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)",
-            [event['id'], sheet['id']])
-        reservation = cur.fetchone()
-        if reservation:
-            if login_user_id and reservation['user_id'] == login_user_id:
-                sheet['mine'] = True
-            sheet['reserved'] = True
-            sheet['reserved_at'] = int(reservation['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
-        else:
-            event['remains'] += 1
-            event['sheets'][sheet['rank']]['remains'] += 1
+        cur.execute("SELECT * FROM sheets ORDER BY `rank`, num")
+        sheets = cur.fetchall()
+        for sheet in sheets:
+            if not event['sheets'][sheet['rank']].get('price'):
+                event['sheets'][sheet['rank']]['price'] = event['price'] + sheet['price']
+            event['total'] += 1
+            event['sheets'][sheet['rank']]['total'] += 1
 
-        event['sheets'][sheet['rank']]['detail'].append(sheet)
+            cur.execute(
+                "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)",
+                [event['id'], sheet['id']])
+            reservation = cur.fetchone()
+            if reservation:
+                if login_user_id and reservation['user_id'] == login_user_id:
+                    sheet['mine'] = True
+                sheet['reserved'] = True
+                sheet['reserved_at'] = int(reservation['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
+            else:
+                event['remains'] += 1
+                event['sheets'][sheet['rank']]['remains'] += 1
 
-        del sheet['id']
-        del sheet['price']
-        del sheet['rank']
+            event['sheets'][sheet['rank']]['detail'].append(sheet)
+
+            del sheet['id']
+            del sheet['price']
+            del sheet['rank']
+    else:
+        sheet_price = {'S': 5000, 'A': 3000, 'B': 1000, 'C': 0}
+        for rank in ranks:
+            event['sheets'][rank] = {'price': event['price'] + sheet_price[rank]}
+        cur.execute('SELECT `rank`, COUNT(*) AS total FROM sheets GROUP BY `rank`')
+        totals = cur.fetchall()
+        for total in totals:
+            event['sheets'][total['rank']]['total'] = total['total']
+            event['sheets'][total['rank']]['remains'] = total['total']
+        cur.execute('SELECT sheets.`rank`, COUNT(*) AS reserved FROM reservations INNER JOIN sheets ON reservations.sheet_id = sheets.id WHERE event_id = %s AND canceled_at IS NULL GROUP BY sheets.`rank`', [event['id']])
+        reserved = cur.fetchall()
+        for rank in reserved:
+            event['sheets'][rank['rank']]['remains'] -= rank['reserved']
+        for rank in ranks:
+            event['total'] += event['sheets'][rank]['total']
+            event['remains'] += event['sheets'][rank]['remains']
 
     event['public'] = True if event['public_fg'] else False
     event['closed'] = True if event['closed_fg'] else False
@@ -313,6 +335,12 @@ def get_users(user_id):
 
     return jsonify(user)
 
+def sha256(s):
+    if isinstance(s, str):
+      s = s.encode('UTF-8')
+    m = hashlib.sha256()
+    m.update(s)
+    return m.hexdigest()
 
 @app.route('/api/actions/login', methods=['POST'])
 def post_login():
@@ -323,8 +351,7 @@ def post_login():
 
     cur.execute('SELECT * FROM users WHERE login_name = %s', [login_name])
     user = cur.fetchone()
-    cur.execute('SELECT SHA2(%s, 256) AS pass_hash', [password])
-    pass_hash = cur.fetchone()
+    pass_hash = {'pass_hash': sha256(password)}
     if not user or pass_hash['pass_hash'] != user['pass_hash']:
         return res_error("authentication_failed", 401)
 

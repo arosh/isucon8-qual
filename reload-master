@@ -2,7 +2,7 @@
 
 # https://moneyforward.com/engineers_blog/2015/05/21/bash-script-tips/
 # Fail on unset variables and command errors
-set -ue -o pipefail
+set -uex -o pipefail
 
 # Prevent commands misbehaving due to locale differences
 export LC_ALL=C
@@ -35,5 +35,6 @@ cp conf/$PYTHON_SERVICE /etc/systemd/system/$PYTHON_SERVICE
 
 systemctl daemon-reload
 systemctl reload h2o
-systemctl restart mariadb torb.python
+systemctl restart mariadb
+systemctl restart torb.python
 journalctl -f -u torb.python
