@@ -2,7 +2,7 @@
 ranking_count = 20
 
 # Top Slow Requests
-# slow_count = 37
+slow_count = 37
 
 # Show Standard Deviation column
 # show_stddev = true
@@ -49,3 +49,6 @@ duration_index = 10
 
 # You can aggregate requests by regular expression
 # For overview of regexp syntax: https://golang.org/pkg/regexp/syntax/
+[[bundle]]
+regexp = '^GET /api/users'
+name = "GET /api/users/*"

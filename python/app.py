@@ -1,3 +1,4 @@
+import sys
 import MySQLdb.cursors
 import flask
 import functools
@@ -134,7 +135,15 @@ def get_event(event_id, login_user_id=None, need_detail=True):
         for rank in ranks:
             event["sheets"][rank] = {'total': 0, 'remains': 0, 'detail': []}
 
-        cur.execute("SELECT * FROM sheets ORDER BY `rank`, num")
+        sql = '''
+        SELECT sheets.id AS id, sheets.`rank` AS `rank`, sheets.num AS num, sheets.price AS price, reservations.user_id AS user_id, reservations.reserved_at AS reserved_at
+        FROM sheets LEFT OUTER JOIN reservations ON sheets.id = reservations.sheet_id
+        AND reservations.event_id = %s
+        AND reservations.canceled_at IS NULL
+        ORDER BY sheets.`rank`, sheets.num
+        '''
+        cur.execute(sql, [event['id']])
+        # cur.execute("SELECT * FROM sheets ORDER BY `rank`, num")
         sheets = cur.fetchall()
         for sheet in sheets:
             if not event['sheets'][sheet['rank']].get('price'):
@@ -142,18 +151,22 @@ def get_event(event_id, login_user_id=None, need_detail=True):
             event['total'] += 1
             event['sheets'][sheet['rank']]['total'] += 1
 
-            cur.execute(
-                "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)",
-                [event['id'], sheet['id']])
-            reservation = cur.fetchone()
-            if reservation:
-                if login_user_id and reservation['user_id'] == login_user_id:
+            # cur.execute(
+            #     "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL",
+            #     [event['id'], sheet['id']])
+            # reservation = cur.fetchone()
+
+            if sheet['user_id']:
+                if login_user_id and sheet['user_id'] == login_user_id:
                     sheet['mine'] = True
+                del sheet['user_id']
                 sheet['reserved'] = True
-                sheet['reserved_at'] = int(reservation['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
+                sheet['reserved_at'] = int(sheet['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
             else:
                 event['remains'] += 1
                 event['sheets'][sheet['rank']]['remains'] += 1
+                del sheet['user_id']
+                del sheet['reserved_at']
 
             event['sheets'][sheet['rank']]['detail'].append(sheet)
 
@@ -456,7 +469,7 @@ def delete_reserve(event_id, rank, num):
         cur = conn.cursor()
 
         cur.execute(
-            "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE",
+            "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL FOR UPDATE",
             [event['id'], sheet['id']])
         reservation = cur.fetchone()
 
