@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# https://moneyforward.com/engineers_blog/2015/05/21/bash-script-tips/
+# Fail on unset variables and command errors
+set -ue -o pipefail
+
+# Prevent commands misbehaving due to locale differences
+export LC_ALL=C
+
+NOW=`date +%Y%m%d-%H%M%S`
+
+# H2O
+H2O_ACCESS_LOG=/var/log/h2o/access.log
+if [ -e $H2O_ACCESS_LOG ]; then
+  mv $H2O_ACCESS_LOG $H2O_ACCESS_LOG.$NOW
+fi
+
+cp conf/h2o.conf /etc/h2o/h2o.conf
+
+systemctl daemon-reload
+systemctl reload h2o
+systemctl restart torb.python
+journalctl -f -u torb.python
