@@ -17,6 +17,10 @@ fi
 
 cp conf/h2o.conf /etc/h2o/h2o.conf
 
+# Python
+PYTHON_SERVICE=torb.python.service
+cp conf/$PYTHON_SERVICE /etc/systemd/system/$PYTHON_SERVICE
+
 systemctl daemon-reload
 systemctl reload h2o
 systemctl restart torb.python
