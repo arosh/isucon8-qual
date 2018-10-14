@@ -347,9 +347,7 @@ def get_users(user_id):
     rows = cur.fetchall()
     recent_events = []
     for row in rows:
-        event = get_event(row['event_id'])
-        for sheet in event['sheets'].values():
-            del sheet['detail']
+        event = get_event(row['event_id'], need_detail=False)
         recent_events.append(event)
     user['recent_events'] = recent_events
 
@@ -414,7 +412,7 @@ def post_reserve(event_id):
     rank = flask.request.json["sheet_rank"]
 
     user = get_login_user()
-    event = get_event(event_id, user['id'])
+    event = get_event(event_id, user['id'], need_detail=False)
 
     if not event or not event['public']:
         return res_error("invalid_event", 404)
@@ -462,7 +460,7 @@ def post_reserve(event_id):
 @login_required
 def delete_reserve(event_id, rank, num):
     user = get_login_user()
-    event = get_event(event_id, user['id'])
+    event = get_event(event_id, user['id'], need_detail=False)
 
     if not event or not event['public']:
         return res_error("invalid_event", 404)
@@ -592,7 +590,7 @@ def post_event_edit(event_id):
     closed = flask.request.json['closed'] if 'closed' in flask.request.json.keys() else False
     if closed: public = False
 
-    event = get_event(event_id)
+    event = get_event(event_id, need_detail=False)
     if not event:
         return res_error("not_found", 404)
 
@@ -617,57 +615,47 @@ def post_event_edit(event_id):
 @app.route('/admin/api/reports/events/<int:event_id>/sales')
 @admin_login_required
 def get_admin_event_sales(event_id):
-    event = get_event(event_id)
-
     cur = dbh().cursor()
-    cur.execute(
-        'SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = %s ORDER BY reserved_at ASC',
-        [event['id']])
+    cur.execute('''
+        SELECT
+            r.id AS reservation_id,
+            r.event_id AS event_id,
+            s.rank AS rank,
+            s.num AS num,
+            s.price + e.price AS price,
+            r.user_id AS user_id,
+            DATE_FORMAT(r.reserved_at, '%%Y-%%m-%%dT%%TZ') AS sold_at,
+            IFNULL(DATE_FORMAT(r.canceled_at, '%%Y-%%m-%%dT%%TZ'), '') AS canceled_at
+        FROM reservations r
+        INNER JOIN sheets s ON s.id = r.sheet_id
+        INNER JOIN events e ON e.id = r.event_id
+        WHERE r.event_id = %s
+        ORDER BY reserved_at ASC''',
+        [event_id])
 
-    def generate():
-        for reservation in cur:
-            if reservation['canceled_at']:
-                canceled_at = reservation['canceled_at'].isoformat()+"Z"
-            else:
-                canceled_at = ''
-            yield {
-                "reservation_id": reservation['id'],
-                "event_id":       event['id'],
-                "rank":           reservation['sheet_rank'],
-                "num":            reservation['sheet_num'],
-                "user_id":        reservation['user_id'],
-                "sold_at":        reservation['reserved_at'].isoformat()+"Z",
-                "canceled_at":    canceled_at,
-                "price":          reservation['event_price'] + reservation['sheet_price'],
-            }
-
-    return render_report_csv(generate())
+    return render_report_csv(cur)
 
 
 @app.route('/admin/api/reports/sales')
 @admin_login_required
 def get_admin_sales():
     cur = dbh().cursor()
-    cur.execute('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.id AS event_id, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id ORDER BY reserved_at ASC')
+    cur.execute('''
+        SELECT
+            r.id AS reservation_id,
+            r.event_id AS event_id,
+            s.rank AS rank,
+            s.num AS num,
+            s.price + e.price AS price,
+            r.user_id AS user_id,
+            DATE_FORMAT(r.reserved_at, '%Y-%m-%dT%TZ') AS sold_at,
+            IFNULL(DATE_FORMAT(r.canceled_at, '%Y-%m-%dT%TZ'), '') AS canceled_at
+        FROM reservations r
+        INNER JOIN sheets s ON s.id = r.sheet_id
+        INNER JOIN events e ON e.id = r.event_id
+        ORDER BY reserved_at ASC''')
 
-    def generate():
-        for reservation in cur:
-            if reservation['canceled_at']:
-                canceled_at = reservation['canceled_at'].isoformat()+"Z"
-            else:
-                canceled_at = ''
-            yield {
-                "reservation_id": reservation['id'],
-                "event_id":       reservation['event_id'],
-                "rank":           reservation['sheet_rank'],
-                "num":            reservation['sheet_num'],
-                "user_id":        reservation['user_id'],
-                "sold_at":        reservation['reserved_at'].isoformat()+"Z",
-                "canceled_at":    canceled_at,
-                "price":          reservation['event_price'] + reservation['sheet_price'],
-            }
-
-    return render_report_csv(generate())
+    return render_report_csv(cur)
 
 
 if __name__ == "__main__":
