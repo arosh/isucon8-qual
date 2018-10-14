@@ -231,23 +231,18 @@ def validate_rank(rank):
 
 
 def render_report_csv(reports):
-    reports = sorted(reports, key=lambda x: x['sold_at'])
-
     keys = ["reservation_id", "event_id", "rank", "num", "price", "user_id", "sold_at", "canceled_at"]
 
-    body = []
-    body.append(keys)
-    for report in reports:
-        body.append([report[key] for key in keys])
+    def generate():
+        yield ','.join(keys) + '\n'
+        for report in reports:
+            yield ','.join([str(report[key]) for key in keys]) + '\n'
 
-    f = StringIO()
-    writer = csv.writer(f)
-    writer.writerows(body)
-    res = flask.make_response()
-    res.data = f.getvalue()
-    res.headers['Content-Type'] = 'text/csv'
-    res.headers['Content-Disposition'] = 'attachment; filename=report.csv'
-    return res
+    headers = {}
+    headers['Content-Type'] = 'text/csv'
+    headers['Content-Disposition'] = 'attachment; filename=report.csv'
+
+    return flask.Response(generate(), headers=headers)
 
 
 @app.route('/')
@@ -599,53 +594,54 @@ def get_admin_event_sales(event_id):
     event = get_event(event_id)
 
     cur = dbh().cursor()
-    reservations = cur.execute(
+    cur.execute(
         'SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = %s ORDER BY reserved_at ASC FOR UPDATE',
         [event['id']])
-    reservations = cur.fetchall()
-    reports = []
 
-    for reservation in reservations:
-        if reservation['canceled_at']:
-            canceled_at = reservation['canceled_at'].isoformat()+"Z"
-        else: canceled_at = ''
-        reports.append({
-            "reservation_id": reservation['id'],
-            "event_id":       event['id'],
-            "rank":           reservation['sheet_rank'],
-            "num":            reservation['sheet_num'],
-            "user_id":        reservation['user_id'],
-            "sold_at":        reservation['reserved_at'].isoformat()+"Z",
-            "canceled_at":    canceled_at,
-            "price":          reservation['event_price'] + reservation['sheet_price'],
-        })
+    def generate():
+        for reservation in cur:
+            if reservation['canceled_at']:
+                canceled_at = reservation['canceled_at'].isoformat()+"Z"
+            else:
+                canceled_at = ''
+            yield {
+                "reservation_id": reservation['id'],
+                "event_id":       event['id'],
+                "rank":           reservation['sheet_rank'],
+                "num":            reservation['sheet_num'],
+                "user_id":        reservation['user_id'],
+                "sold_at":        reservation['reserved_at'].isoformat()+"Z",
+                "canceled_at":    canceled_at,
+                "price":          reservation['event_price'] + reservation['sheet_price'],
+            }
 
-    return render_report_csv(reports)
+    return render_report_csv(generate())
 
 
 @app.route('/admin/api/reports/sales')
 @admin_login_required
 def get_admin_sales():
     cur = dbh().cursor()
-    reservations = cur.execute('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.id AS event_id, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id ORDER BY reserved_at ASC FOR UPDATE')
-    reservations = cur.fetchall()
+    cur.execute('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.id AS event_id, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id ORDER BY reserved_at ASC')
 
-    reports = []
-    for reservation in reservations:
-        if reservation['canceled_at']:
-            canceled_at = reservation['canceled_at'].isoformat()+"Z"
-        else: canceled_at = ''
-        reports.append({
-            "reservation_id": reservation['id'],
-            "event_id":       reservation['event_id'],
-            "rank":           reservation['sheet_rank'],
-            "num":            reservation['sheet_num'],
-            "user_id":        reservation['user_id'],
-            "sold_at":        reservation['reserved_at'].isoformat()+"Z",
-            "canceled_at":    canceled_at,
-            "price":          reservation['event_price'] + reservation['sheet_price'],
-        })
-    return render_report_csv(reports)
+    def generate():
+        for reservation in cur:
+            if reservation['canceled_at']:
+                canceled_at = reservation['canceled_at'].isoformat()+"Z"
+            else:
+                canceled_at = ''
+            yield {
+                "reservation_id": reservation['id'],
+                "event_id":       reservation['event_id'],
+                "rank":           reservation['sheet_rank'],
+                "num":            reservation['sheet_num'],
+                "user_id":        reservation['user_id'],
+                "sold_at":        reservation['reserved_at'].isoformat()+"Z",
+                "canceled_at":    canceled_at,
+                "price":          reservation['event_price'] + reservation['sheet_price'],
+            }
+
+    return render_report_csv(generate())
 
 
 if __name__ == "__main__":
