@@ -17,13 +17,13 @@ fi
 
 cp conf/h2o.conf /etc/h2o/h2o.conf
 
-# MySQL
-MYSQL_SLOW=/var/log/mysql/mysql-slow.log
-if [ -e $MYSQL_SLOW ]; then
-  mv $MYSQL_SLOW $MYSQL_SLOW.$NOW
+# MariaDB
+MARIADB_SLOW=/var/log/mariadb/mariadb-slow.log
+if [ -e $MARIADB_SLOW ]; then
+  mv $MARIADB_SLOW $MARIADB_SLOW.$NOW
 fi
 
-cp conf/my.cnf /etc/my.cnf
+cp conf/server.cnf /etc/my.cnf.d/server.cnf
 
 if mysqladmin -uroot status; then
   mysqladmin -uroot flush-logs
@@ -38,6 +38,6 @@ rm /tmp/profile/*
 
 systemctl daemon-reload
 systemctl reload h2o
-systemctl restart mysqld
+systemctl restart mariadb
 systemctl restart torb.python
 journalctl -f -u torb.python
