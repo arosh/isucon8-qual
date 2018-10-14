@@ -91,8 +91,6 @@ def dbh():
         cursorclass=MySQLdb.cursors.DictCursor,
         autocommit=True,
     )
-    cur = flask.g.db.cursor()
-    cur.execute("SET SESSION sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'")
     return flask.g.db
 
 
@@ -140,35 +138,52 @@ def get_event(event_id, login_user_id=None, need_detail=True):
             'remains': sheet_totals[rank]
         }
     cur.execute('SELECT `rank`, reserved FROM sheet_reserved WHERE event_id = %s', [event_id])
-    reserved = cur.fetchall()
-    for rank in reserved:
-        event['sheets'][rank['rank']]['remains'] -= rank['reserved']
-        event['remains'] -= rank['reserved']
+    for row in cur.fetchall():
+        event['sheets'][row['rank']]['remains'] -= row['reserved']
+        event['remains'] -= row['reserved']
 
     if need_detail:
         for rank in RANKS:
             event['sheets'][rank]['detail'] = []
 
         sql = '''
-        SELECT sheets.num AS num, sheets.`rank` AS `rank`, reservations.user_id AS user_id, reservations.reserved_at AS reserved_at
-        FROM sheets LEFT OUTER JOIN reservations ON sheets.id = reservations.sheet_id
-        AND reservations.event_id = %s
-        AND reservations.canceled_at IS NULL
-        ORDER BY sheets.`rank`, sheets.num
+        SELECT sheet_id, user_id, reserved_at
+        FROM reservations
+        WHERE event_id = %s AND canceled_at IS NULL
+        ORDER BY sheet_id
         '''
         cur.execute(sql, [event['id']])
-        for sheet in cur:
-            if sheet['user_id']:
-                if login_user_id and sheet['user_id'] == login_user_id:
-                    sheet['mine'] = True
-                sheet['reserved'] = True
-                sheet['reserved_at'] = int(sheet['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
-            else:
-                del sheet['reserved_at']
 
-            rank = sheet['rank']
-            del sheet['user_id']
-            del sheet['rank']
+        def convert(sheet_id):
+            if sheet_id <= 50:
+                return ('S', sheet_id)
+            if sheet_id <= 200:
+                return ('A', sheet_id - 50)
+            if sheet_id <= 500:
+                return ('B', sheet_id - 200)
+            return ('C', sheet_id - 500)
+
+        last_sheet_id = 0
+        for r in cur.fetchall():
+            for sheet_id in range(last_sheet_id + 1, r['sheet_id']):
+                rank, num = convert(sheet_id)
+                sheet = {'num': num}
+                event['sheets'][rank]['detail'].append(sheet)
+
+            rank, num = convert(r['sheet_id'])
+            sheet = {
+                'num': num,
+            }
+            if login_user_id and r['user_id'] == login_user_id:
+                sheet['mine'] = True
+            sheet['reserved'] = True
+            sheet['reserved_at'] = int(r['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
+            event['sheets'][rank]['detail'].append(sheet)
+            last_sheet_id = r['sheet_id']
+
+        for sheet_id in range(last_sheet_id + 1, 1001):
+            rank, num = convert(sheet_id)
+            sheet = {'num': num}
             event['sheets'][rank]['detail'].append(sheet)
 
     event['public'] = True if event['public_fg'] else False
@@ -250,9 +265,8 @@ def get_initialize():
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ''')
     cur.execute('SELECT id FROM events')
-    events = cur.fetchall()
     reserved = {}
-    for event in events:
+    for event in cur.fetchall():
         event_id = event['id']
         sql = '''
         SELECT sheets.`rank` AS `rank`, COUNT(reservations.id) AS reserved
@@ -262,9 +276,8 @@ def get_initialize():
         GROUP BY sheets.`rank`
         '''
         cur.execute(sql, [event_id])
-        rs = cur.fetchall()
-        for r in rs:
-            reserved[r['rank']] = r['reserved']
+        for row in cur.fetchall():
+            reserved[row['rank']] = row['reserved']
         for rank in RANKS:
             cur.execute(
                 'INSERT INTO sheet_reserved (event_id, `rank`, reserved) VALUES (%s, %s, %s)',
@@ -344,9 +357,8 @@ def get_users(user_id):
     cur.execute(
         "SELECT event_id FROM reservations WHERE user_id = %s GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5",
         [user['id']])
-    rows = cur.fetchall()
     recent_events = []
-    for row in rows:
+    for row in cur.fetchall():
         event = get_event(row['event_id'], need_detail=False)
         recent_events.append(event)
     user['recent_events'] = recent_events
@@ -366,7 +378,6 @@ def post_login():
     password = flask.request.json['password']
 
     cur = dbh().cursor()
-
     cur.execute('SELECT * FROM users WHERE login_name = %s', [login_name])
     user = cur.fetchone()
     pass_hash = {'pass_hash': sha256(password)}
@@ -477,7 +488,6 @@ def delete_reserve(event_id, rank, num):
         conn = dbh()
         conn.autocommit(False)
         cur = conn.cursor()
-
         cur.execute(
             "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL FOR UPDATE",
             [event['id'], sheet['id']])
@@ -521,7 +531,6 @@ def post_adin_login():
     password = flask.request.json['password']
 
     cur = dbh().cursor()
-
     cur.execute('SELECT * FROM administrators WHERE login_name = %s', [login_name])
     administrator = cur.fetchone()
     cur.execute('SELECT SHA2(%s, 256) AS pass_hash', [password])
