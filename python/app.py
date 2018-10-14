@@ -119,11 +119,14 @@ def get_events(filter=lambda e: True):
     return events
 
 
-def get_event(event_id, login_user_id=None, need_detail=True):
+def get_event(event_id, login_user_id=None, need_detail=True, only_public=False):
     cur = dbh().cursor()
     cur.execute("SELECT * FROM events WHERE id = %s", [event_id])
     event = cur.fetchone()
-    if not event: return None
+    if not event:
+        return None
+    if only_public and not event['public_fg']:
+        return None
 
     event["total"] = 1000
     event["remains"] = event['total']
@@ -407,10 +410,10 @@ def get_events_api():
 @app.route('/api/events/<int:event_id>')
 def get_events_by_id(event_id):
     user = get_login_user()
-    if user: event = get_event(event_id, user['id'])
-    else: event = get_event(event_id)
+    if user: event = get_event(event_id, user['id'], only_public=True)
+    else: event = get_event(event_id, only_public=True)
 
-    if not event or not event["public"]:
+    if not event:
         return res_error("not_found", 404)
 
     event = sanitize_event(event)
