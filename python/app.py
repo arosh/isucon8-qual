@@ -126,69 +126,56 @@ def get_event(event_id, login_user_id=None, need_detail=True):
     event = cur.fetchone()
     if not event: return None
 
-    event["total"] = 0
-    event["remains"] = 0
+    event["total"] = 1000
+    event["remains"] = event['total']
     event["sheets"] = {}
     ranks = ["S", "A", "B", "C"]
 
+    sheet_price = {'S': 5000, 'A': 3000, 'B': 1000, 'C': 0}
+    sheet_totals = {'S': 50, 'A': 150, 'B': 300, 'C': 500}
+    for rank in ranks:
+        event['sheets'][rank] = {
+            'price': event['price'] + sheet_price[rank],
+            'total': sheet_totals[rank],
+            'remains': sheet_totals[rank]
+        }
+    sql = '''
+    SELECT sheets.`rank`, COUNT(*) AS reserved
+    FROM reservations INNER JOIN sheets ON reservations.sheet_id = sheets.id
+    WHERE reservations.event_id = %s AND canceled_at IS NULL
+    GROUP BY sheets.`rank`
+    '''
+    cur.execute(sql, [event['id']])
+    reserved = cur.fetchall()
+    for rank in reserved:
+        event['sheets'][rank['rank']]['remains'] -= rank['reserved']
+        event['remains'] -= rank['reserved']
+
     if need_detail:
         for rank in ranks:
-            event["sheets"][rank] = {'total': 0, 'remains': 0, 'detail': []}
+            event['sheets'][rank]['detail'] = []
 
         sql = '''
-        SELECT sheets.id AS id, sheets.`rank` AS `rank`, sheets.num AS num, sheets.price AS price, reservations.user_id AS user_id, reservations.reserved_at AS reserved_at
+        SELECT sheets.num AS num, sheets.`rank` AS `rank`, reservations.user_id AS user_id, reservations.reserved_at AS reserved_at
         FROM sheets LEFT OUTER JOIN reservations ON sheets.id = reservations.sheet_id
         AND reservations.event_id = %s
         AND reservations.canceled_at IS NULL
         ORDER BY sheets.`rank`, sheets.num
         '''
         cur.execute(sql, [event['id']])
-        # cur.execute("SELECT * FROM sheets ORDER BY `rank`, num")
-        sheets = cur.fetchall()
-        for sheet in sheets:
-            if not event['sheets'][sheet['rank']].get('price'):
-                event['sheets'][sheet['rank']]['price'] = event['price'] + sheet['price']
-            event['total'] += 1
-            event['sheets'][sheet['rank']]['total'] += 1
-
-            # cur.execute(
-            #     "SELECT * FROM reservations WHERE event_id = %s AND sheet_id = %s AND canceled_at IS NULL",
-            #     [event['id'], sheet['id']])
-            # reservation = cur.fetchone()
-
+        for sheet in cur:
             if sheet['user_id']:
                 if login_user_id and sheet['user_id'] == login_user_id:
                     sheet['mine'] = True
-                del sheet['user_id']
                 sheet['reserved'] = True
                 sheet['reserved_at'] = int(sheet['reserved_at'].replace(tzinfo=timezone.utc).timestamp())
             else:
-                event['remains'] += 1
-                event['sheets'][sheet['rank']]['remains'] += 1
-                del sheet['user_id']
                 del sheet['reserved_at']
 
-            event['sheets'][sheet['rank']]['detail'].append(sheet)
-
-            del sheet['id']
-            del sheet['price']
+            rank = sheet['rank']
+            del sheet['user_id']
             del sheet['rank']
-    else:
-        sheet_price = {'S': 5000, 'A': 3000, 'B': 1000, 'C': 0}
-        for rank in ranks:
-            event['sheets'][rank] = {'price': event['price'] + sheet_price[rank]}
-        cur.execute('SELECT `rank`, COUNT(*) AS total FROM sheets GROUP BY `rank`')
-        totals = cur.fetchall()
-        for total in totals:
-            event['sheets'][total['rank']]['total'] = total['total']
-            event['sheets'][total['rank']]['remains'] = total['total']
-        cur.execute('SELECT sheets.`rank`, COUNT(*) AS reserved FROM reservations INNER JOIN sheets ON reservations.sheet_id = sheets.id WHERE event_id = %s AND canceled_at IS NULL GROUP BY sheets.`rank`', [event['id']])
-        reserved = cur.fetchall()
-        for rank in reserved:
-            event['sheets'][rank['rank']]['remains'] -= rank['reserved']
-        for rank in ranks:
-            event['total'] += event['sheets'][rank]['total']
-            event['remains'] += event['sheets'][rank]['remains']
+            event['sheets'][rank]['detail'].append(sheet)
 
     event['public'] = True if event['public_fg'] else False
     event['closed'] = True if event['closed_fg'] else False
