@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 base_path = pathlib.Path(__file__).resolve().parent.parent
 static_folder = base_path / 'static'
 icons_folder = base_path / 'public' / 'icons'
+RANKS = ["S", "A", "B", "C"]
 
 
 class CustomFlask(flask.Flask):
@@ -129,30 +130,23 @@ def get_event(event_id, login_user_id=None, need_detail=True):
     event["total"] = 1000
     event["remains"] = event['total']
     event["sheets"] = {}
-    ranks = ["S", "A", "B", "C"]
 
     sheet_price = {'S': 5000, 'A': 3000, 'B': 1000, 'C': 0}
     sheet_totals = {'S': 50, 'A': 150, 'B': 300, 'C': 500}
-    for rank in ranks:
+    for rank in RANKS:
         event['sheets'][rank] = {
             'price': event['price'] + sheet_price[rank],
             'total': sheet_totals[rank],
             'remains': sheet_totals[rank]
         }
-    sql = '''
-    SELECT sheets.`rank`, COUNT(*) AS reserved
-    FROM reservations INNER JOIN sheets ON reservations.sheet_id = sheets.id
-    WHERE reservations.event_id = %s AND canceled_at IS NULL
-    GROUP BY sheets.`rank`
-    '''
-    cur.execute(sql, [event['id']])
+    cur.execute('SELECT `rank`, reserved FROM sheet_reserved WHERE event_id = %s', [event_id])
     reserved = cur.fetchall()
     for rank in reserved:
         event['sheets'][rank['rank']]['remains'] -= rank['reserved']
         event['remains'] -= rank['reserved']
 
     if need_detail:
-        for rank in ranks:
+        for rank in RANKS:
             event['sheets'][rank]['detail'] = []
 
         sql = '''
@@ -244,6 +238,37 @@ def get_index():
 @app.route('/initialize')
 def get_initialize():
     subprocess.call(["../../db/init.sh"])
+    conn = dbh()
+    cur = conn.cursor()
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS sheet_reserved (
+        id          INTEGER UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        event_id    INTEGER UNSIGNED NOT NULL,
+        `rank`      VARCHAR(128)     NOT NULL,
+        reserved    INTEGER UNSIGNED NOT NULL,
+        UNIQUE KEY event_id_rank_uniq (event_id, `rank`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ''')
+    cur.execute('SELECT id FROM events')
+    events = cur.fetchall()
+    reserved = {}
+    for event in events:
+        event_id = event['id']
+        sql = '''
+        SELECT sheets.`rank` AS `rank`, COUNT(reservations.id) AS reserved
+        FROM sheets LEFT OUTER JOIN reservations ON reservations.sheet_id = sheets.id
+        AND event_id = %s
+        AND canceled_at IS NULL
+        GROUP BY sheets.`rank`
+        '''
+        cur.execute(sql, [event_id])
+        rs = cur.fetchall()
+        for r in rs:
+            reserved[r['rank']] = r['reserved']
+        for rank in RANKS:
+            cur.execute(
+                'INSERT INTO sheet_reserved (event_id, `rank`, reserved) VALUES (%s, %s, %s)',
+                [event_id, rank, reserved.get(rank, 0)])
     return ('', 204)
 
 
@@ -415,6 +440,11 @@ def post_reserve(event_id):
                 "INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (%s, %s, %s, %s)",
                 [event['id'], sheet['id'], user['id'], datetime.utcnow().strftime("%F %T.%f")])
             reservation_id = cur.lastrowid
+            sql = '''
+            UPDATE sheet_reserved SET reserved = reserved + 1
+            WHERE event_id = %s AND `rank` = %s
+            '''
+            cur.execute(sql, [event_id, rank])
             conn.commit()
         except MySQLdb.Error as e:
             conn.rollback()
@@ -465,6 +495,11 @@ def delete_reserve(event_id, rank, num):
         cur.execute(
             "UPDATE reservations SET canceled_at = %s WHERE id = %s",
             [datetime.utcnow().strftime("%F %T.%f"), reservation['id']])
+        sql = '''
+        UPDATE sheet_reserved SET reserved = reserved - 1
+        WHERE event_id = %s AND `rank` = %s
+        '''
+        cur.execute(sql, [event_id, rank])
         conn.commit()
     except MySQLdb.Error as e:
         conn.rollback()
@@ -530,6 +565,10 @@ def post_admin_events_api():
             "INSERT INTO events (title, public_fg, closed_fg, price) VALUES (%s, %s, 0, %s)",
             [title, public, price])
         event_id = cur.lastrowid
+        for rank in RANKS:
+            cur.execute(
+                'INSERT INTO sheet_reserved (event_id, `rank`, reserved) VALUES (%s, %s, 0)',
+                [event_id, rank])
         conn.commit()
     except MySQLdb.Error as e:
         conn.rollback()
@@ -582,7 +621,7 @@ def get_admin_event_sales(event_id):
 
     cur = dbh().cursor()
     cur.execute(
-        'SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = %s ORDER BY reserved_at ASC FOR UPDATE',
+        'SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = %s ORDER BY reserved_at ASC',
         [event['id']])
 
     def generate():
