@@ -12,7 +12,7 @@
 [mysqld]
 
 # slow query
-slow_query_log
+slow_query_log = 0
 slow_query_log_file = /var/log/mariadb/mariadb-slow.log
 long_query_time = 0
 log-queries-not-using-indexes
