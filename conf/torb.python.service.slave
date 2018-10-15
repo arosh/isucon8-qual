@@ -5,7 +5,7 @@ Description = isucon8 qualifier webapp in python
 WorkingDirectory=/home/isucon/torb/webapp/python
 EnvironmentFile=/home/isucon/torb/webapp/env.sh
 
-ExecStart = /home/isucon/torb/webapp/python/venv/bin/gunicorn -b '0.0.0.0:8080' -w 2 app:app
+ExecStart = /home/isucon/torb/webapp/python/venv/bin/gunicorn -b '0.0.0.0:8080' -w 4 app:app
 
 Restart   = always
 Type      = simple

@@ -36,6 +36,10 @@ cp conf/$PYTHON_SERVICE.master /etc/systemd/system/$PYTHON_SERVICE
 # pprof
 find /tmp/profile -type f -exec rm {} +
 
+# sysctl
+cp conf/sysctl.conf /etc/sysctl.conf
+sysctl -p
+
 systemctl daemon-reload
 systemctl reload h2o
 systemctl restart mariadb
