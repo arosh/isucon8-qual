@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# https://moneyforward.com/engineers_blog/2015/05/21/bash-script-tips/
+# Fail on unset variables and command errors
+set -uex -o pipefail
+
+# Prevent commands misbehaving due to locale differences
+export LC_ALL=C
+
+# Python
+PYTHON_SERVICE=torb.python.service
+cp conf/$PYTHON_SERVICE.slave /etc/systemd/system/$PYTHON_SERVICE
+
+# pprof
+find /tmp/profile -type f -exec rm {} +
+
+systemctl daemon-reload
+systemctl restart torb.python
+journalctl -f -u torb.python

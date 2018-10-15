@@ -31,7 +31,7 @@ fi
 
 # Python
 PYTHON_SERVICE=torb.python.service
-cp conf/$PYTHON_SERVICE /etc/systemd/system/$PYTHON_SERVICE
+cp conf/$PYTHON_SERVICE.master /etc/systemd/system/$PYTHON_SERVICE
 
 # pprof
 find /tmp/profile -type f -exec rm {} +
